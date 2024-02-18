@@ -1,13 +1,12 @@
-use proc_macro2::TokenStream;
+use aya_log_common::DisplayHint;
+use aya_log_parser::{parse, Fragment};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     Error, Expr, LitStr, Result, Token,
 };
-
-use aya_log_common::DisplayHint;
-use aya_log_parser::{parse, Fragment};
 
 pub(crate) struct LogArgs {
     pub(crate) ctx: Expr,
@@ -142,36 +141,34 @@ pub(crate) fn log(args: LogArgs, level: Option<TokenStream>) -> Result<TokenStre
 
     let num_args = values.len();
     let values_iter = values.iter();
-
+    let size = Ident::new("size", Span::mixed_site());
+    let len = Ident::new("len", Span::mixed_site());
+    let slice = Ident::new("slice", Span::mixed_site());
+    let record = Ident::new("record", Span::mixed_site());
     Ok(quote! {
-        {
-            if let Some(buf_ptr) = unsafe { ::aya_log_ebpf::AYA_LOG_BUF.get_ptr_mut(0) } {
-                let buf = unsafe { &mut *buf_ptr };
-                if let Ok(header_len) = ::aya_log_ebpf::write_record_header(
-                    &mut buf.buf,
-                    #target,
-                    #lvl,
-                    module_path!(),
-                    file!(),
-                    line!(),
-                    #num_args,
-                ) {
-                    let record_len = header_len;
-
-                    if let Ok(record_len) = {
-                        Ok::<_, ()>(record_len) #( .and_then(|record_len| {
-                            if record_len >= buf.buf.len() {
-                                return Err(());
-                            }
-                            aya_log_ebpf::WriteToBuf::write({ #values_iter }, &mut buf.buf[record_len..]).map(|len| record_len + len)
-                        }) )*
-                    } {
-                        unsafe { ::aya_log_ebpf::AYA_LOGS.output(
-                            #ctx,
-                            &buf.buf[..record_len], 0
-                        )}
-                    }
-                }
+        match unsafe { &mut ::aya_log_ebpf::AYA_LOG_BUF }.get_ptr_mut(0).and_then(|ptr| unsafe { ptr.as_mut() }) {
+            None => {},
+            Some(::aya_log_ebpf::LogBuf { buf }) => {
+                let _: Option<()> = (|| {
+                    let #size = ::aya_log_ebpf::write_record_header(
+                        buf,
+                        #target,
+                        #lvl,
+                        module_path!(),
+                        file!(),
+                        line!(),
+                        #num_args,
+                    )?;
+                    let mut #size = #size.get();
+                    #(
+                        let #slice = buf.get_mut(#size..)?;
+                        let #len = ::aya_log_ebpf::WriteToBuf::write(#values_iter, #slice)?;
+                        #size += #len.get();
+                    )*
+                    let #record = buf.get(..#size)?;
+                    unsafe { &mut ::aya_log_ebpf::AYA_LOGS }.output(#ctx, #record, 0);
+                    Some(())
+                })();
             }
         }
     })

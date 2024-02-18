@@ -1,9 +1,10 @@
 //! Perf event programs.
 
+use std::os::fd::AsFd as _;
+
 pub use crate::generated::{
     perf_hw_cache_id, perf_hw_cache_op_id, perf_hw_cache_op_result_id, perf_hw_id, perf_sw_ids,
 };
-
 use crate::{
     generated::{
         bpf_link_type,
@@ -19,7 +20,7 @@ use crate::{
         perf_attach::{PerfLinkIdInner, PerfLinkInner},
         FdLink, LinkError, ProgramData, ProgramError,
     },
-    sys::{bpf_link_get_info_by_fd, perf_event_open},
+    sys::{bpf_link_get_info_by_fd, perf_event_open, SyscallError},
 };
 
 /// The type of perf event
@@ -114,6 +115,7 @@ pub enum PerfEventScope {
 ///         PERF_COUNT_SW_CPU_CLOCK as u64,
 ///         PerfEventScope::AllProcessesOneCpu { cpu },
 ///         SamplePolicy::Period(1000000),
+///         true,
 ///     )?;
 /// }
 /// # Ok::<(), Error>(())
@@ -136,6 +138,10 @@ impl PerfEvent {
     /// `perf_type`. See `perf_sw_ids`, `perf_hw_id`, `perf_hw_cache_id`,
     /// `perf_hw_cache_op_id` and `perf_hw_cache_op_result_id`.
     ///
+    /// The `scope` argument determines which processes are sampled. If `inherit`
+    /// is true, any new processes spawned by those processes will also
+    /// automatically get sampled.
+    ///
     /// The returned value can be used to detach, see [PerfEvent::detach].
     pub fn attach(
         &mut self,
@@ -143,7 +149,10 @@ impl PerfEvent {
         config: u64,
         scope: PerfEventScope,
         sample_policy: SamplePolicy,
+        inherit: bool,
     ) -> Result<PerfEventLinkId, ProgramError> {
+        let prog_fd = self.fd()?;
+        let prog_fd = prog_fd.as_fd();
         let (sample_period, sample_frequency) = match sample_policy {
             SamplePolicy::Period(period) => (period, None),
             SamplePolicy::Frequency(frequency) => (0, Some(frequency)),
@@ -163,14 +172,15 @@ impl PerfEvent {
             sample_period,
             sample_frequency,
             false,
+            inherit,
             0,
         )
-        .map_err(|(_code, io_error)| ProgramError::SyscallError {
+        .map_err(|(_code, io_error)| SyscallError {
             call: "perf_event_open",
             io_error,
-        })? as i32;
+        })?;
 
-        let link = perf_attach(self.data.fd_or_err()?, fd)?;
+        let link = perf_attach(prog_fd, fd)?;
         self.data.links.insert(PerfEventLink::new(link))
     }
 
@@ -206,14 +216,9 @@ impl TryFrom<FdLink> for PerfEventLink {
     type Error = LinkError;
 
     fn try_from(fd_link: FdLink) -> Result<Self, Self::Error> {
-        let info =
-            bpf_link_get_info_by_fd(fd_link.fd).map_err(|io_error| LinkError::SyscallError {
-                call: "BPF_OBJ_GET_INFO_BY_FD",
-                code: 0,
-                io_error,
-            })?;
+        let info = bpf_link_get_info_by_fd(fd_link.fd.as_fd())?;
         if info.type_ == (bpf_link_type::BPF_LINK_TYPE_PERF_EVENT as u32) {
-            return Ok(PerfEventLink::new(PerfLinkInner::FdLink(fd_link)));
+            return Ok(Self::new(PerfLinkInner::FdLink(fd_link)));
         }
         Err(LinkError::InvalidLink)
     }

@@ -2,7 +2,7 @@
 name = "aya-log-common"
 version = "0.1.13"
 description = "A logging library for eBPF programs."
-keywords = ["ebpf", "bpf", "log", "logging"]
+keywords = ["bpf", "ebpf", "log", "logging"]
 license = "MIT OR Apache-2.0"
 authors = ["The Aya Contributors"]
 repository = "https://github.com/aya-rs/aya-log"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/aya-log"
 edition = "2021"
 
 [dependencies]
-num_enum = { version = "0.6", default-features = false }
+num_enum = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

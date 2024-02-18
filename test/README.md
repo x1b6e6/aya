@@ -1,27 +1,18 @@
-Aya Integration Tests
-=====================
+# Aya Integration Tests
 
 The aya integration test suite is a set of tests to ensure that
 common usage behaviours work on real Linux distros
+
 ## Prerequisites
 
-### Linux
+You'll need:
 
-To run locally all you need is:
-
-1. Rust nightly
-2. `libelf`
-3. A checkout of [libbpf](https://github.com/libbpf/libbpf)
-4. `cargo install bpf-linker`
-5. `bpftool`
-
-### Other OSs
-
-1. A POSIX shell
-1. A checkout of [libbpf](https://github.com/libbpf/libbpf)
-1. `rustup target add x86_64-unknown-linux-musl`
+1. `rustup toolchain install nightly`
+1. `rustup target add {aarch64,x86_64}-unknown-linux-musl`
 1. `cargo install bpf-linker`
-1. Install `qemu` and `cloud-init-utils` package - or any package that provides `cloud-localds`
+1. `libelf-dev` (`libelf-devel` on rpm-based distros)
+1. `llvm` (for `llvm-objcopy`)
+1. (virtualized only) `qemu`
 
 ## Usage
 
@@ -29,14 +20,14 @@ From the root of this repository:
 
 ### Native
 
-```
-cargo xtask integration-test
+```bash
+cargo xtask integration-test local
 ```
 
 ### Virtualized
 
-```
-./test/run.sh
+```bash
+cargo xtask integration-test vm <KERNEL IMAGE>
 ```
 
 ### Writing an integration test
@@ -51,5 +42,5 @@ Tests should follow these guidelines:
   constants in `integration-test/src/lib.rs` using `include_bytes_aligned!`.
 - Tests should be added to `integration-test/tests`.
 - You may add a new module, or use an existing one.
-- Test functions should not return `anyhow::Result<()>` since this produces errors without stack
-  traces. Prefer to `panic!` instead.
+- Test functions should not return `anyhow::Result<()>` since this produces
+  errors without stack traces. Prefer to `panic!` instead.

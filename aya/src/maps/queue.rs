@@ -2,11 +2,12 @@
 use std::{
     borrow::{Borrow, BorrowMut},
     marker::PhantomData,
+    os::fd::AsFd as _,
 };
 
 use crate::{
     maps::{check_kv_size, MapData, MapError},
-    sys::{bpf_map_lookup_and_delete_elem, bpf_map_push_elem},
+    sys::{bpf_map_lookup_and_delete_elem, bpf_map_push_elem, SyscallError},
     Pod,
 };
 
@@ -29,18 +30,16 @@ use crate::{
 /// ```
 #[doc(alias = "BPF_MAP_TYPE_QUEUE")]
 pub struct Queue<T, V: Pod> {
-    inner: T,
+    pub(crate) inner: T,
     _v: PhantomData<V>,
 }
 
 impl<T: Borrow<MapData>, V: Pod> Queue<T, V> {
-    pub(crate) fn new(map: T) -> Result<Queue<T, V>, MapError> {
+    pub(crate) fn new(map: T) -> Result<Self, MapError> {
         let data = map.borrow();
         check_kv_size::<(), V>(data)?;
 
-        let _fd = data.fd_or_err()?;
-
-        Ok(Queue {
+        Ok(Self {
             inner: map,
             _v: PhantomData,
         })
@@ -62,10 +61,10 @@ impl<T: BorrowMut<MapData>, V: Pod> Queue<T, V> {
     /// Returns [`MapError::ElementNotFound`] if the queue is empty, [`MapError::SyscallError`]
     /// if `bpf_map_lookup_and_delete_elem` fails.
     pub fn pop(&mut self, flags: u64) -> Result<V, MapError> {
-        let fd = self.inner.borrow().fd_or_err()?;
+        let fd = self.inner.borrow().fd().as_fd();
 
         let value = bpf_map_lookup_and_delete_elem::<u32, _>(fd, None, flags).map_err(
-            |(_, io_error)| MapError::SyscallError {
+            |(_, io_error)| SyscallError {
                 call: "bpf_map_lookup_and_delete_elem",
                 io_error,
             },
@@ -79,12 +78,10 @@ impl<T: BorrowMut<MapData>, V: Pod> Queue<T, V> {
     ///
     /// [`MapError::SyscallError`] if `bpf_map_update_elem` fails.
     pub fn push(&mut self, value: impl Borrow<V>, flags: u64) -> Result<(), MapError> {
-        let fd = self.inner.borrow().fd_or_err()?;
-        bpf_map_push_elem(fd, value.borrow(), flags).map_err(|(_, io_error)| {
-            MapError::SyscallError {
-                call: "bpf_map_push_elem",
-                io_error,
-            }
+        let fd = self.inner.borrow().fd().as_fd();
+        bpf_map_push_elem(fd, value.borrow(), flags).map_err(|(_, io_error)| SyscallError {
+            call: "bpf_map_push_elem",
+            io_error,
         })?;
         Ok(())
     }

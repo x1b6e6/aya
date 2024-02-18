@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 
+use alloc::{string::ToString, vec, vec::Vec};
 use core::{fmt::Display, mem, ptr};
 
-use alloc::{string::ToString, vec, vec::Vec};
 use object::Endianness;
 
 use crate::btf::{Btf, BtfError, MAX_RESOLVE_DEPTH};
@@ -76,7 +76,7 @@ impl Const {
 
     pub(crate) fn new(btf_type: u32) -> Self {
         let info = (BtfKind::Const as u32) << 24;
-        Const {
+        Self {
             name_offset: 0,
             info,
             btf_type,
@@ -150,7 +150,7 @@ impl Ptr {
 
     pub fn new(name_offset: u32, btf_type: u32) -> Self {
         let info = (BtfKind::Ptr as u32) << 24;
-        Ptr {
+        Self {
             name_offset,
             info,
             btf_type,
@@ -181,7 +181,7 @@ impl Typedef {
 
     pub(crate) fn new(name_offset: u32, btf_type: u32) -> Self {
         let info = (BtfKind::Typedef as u32) << 24;
-        Typedef {
+        Self {
             name_offset,
             info,
             btf_type,
@@ -211,7 +211,7 @@ impl Float {
 
     pub fn new(name_offset: u32, size: u32) -> Self {
         let info = (BtfKind::Float as u32) << 24;
-        Float {
+        Self {
             name_offset,
             info,
             size,
@@ -262,7 +262,7 @@ impl Func {
     pub fn new(name_offset: u32, proto: u32, linkage: FuncLinkage) -> Self {
         let mut info = (BtfKind::Func as u32) << 24;
         info |= (linkage as u32) & 0xFFFF;
-        Func {
+        Self {
             name_offset,
             info,
             btf_type: proto,
@@ -301,7 +301,7 @@ impl TypeTag {
 
     pub fn new(name_offset: u32, btf_type: u32) -> Self {
         let info = (BtfKind::TypeTag as u32) << 24;
-        TypeTag {
+        Self {
             name_offset,
             info,
             btf_type,
@@ -342,12 +342,19 @@ pub struct Int {
 
 impl Int {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        buf.extend(bytes_of::<u32>(&self.data));
-        buf
+        let Self {
+            name_offset,
+            info,
+            size,
+            data,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+            bytes_of::<u32>(data),
+        ]
+        .concat()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -363,7 +370,7 @@ impl Int {
         data |= (encoding as u32 & 0x0f) << 24;
         data |= (offset & 0xff) << 16;
         data |= (size * 8) & 0xff;
-        Int {
+        Self {
             name_offset,
             info,
             size,
@@ -393,6 +400,12 @@ pub struct BtfEnum {
     pub value: u32,
 }
 
+impl BtfEnum {
+    pub fn new(name_offset: u32, value: u32) -> Self {
+        Self { name_offset, value }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Enum {
@@ -404,15 +417,24 @@ pub struct Enum {
 
 impl Enum {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        for v in &self.variants {
-            buf.extend(bytes_of::<u32>(&v.name_offset));
-            buf.extend(bytes_of::<u32>(&v.value));
-        }
-        buf
+        let Self {
+            name_offset,
+            info,
+            size,
+            variants,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+        ]
+        .into_iter()
+        .chain(variants.iter().flat_map(|BtfEnum { name_offset, value }| {
+            [bytes_of::<u32>(name_offset), bytes_of::<u32>(value)]
+        }))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -423,10 +445,13 @@ impl Enum {
         mem::size_of::<Fwd>() + mem::size_of::<BtfEnum>() * self.variants.len()
     }
 
-    pub fn new(name_offset: u32, variants: Vec<BtfEnum>) -> Self {
+    pub fn new(name_offset: u32, signed: bool, variants: Vec<BtfEnum>) -> Self {
         let mut info = (BtfKind::Enum as u32) << 24;
         info |= (variants.len() as u32) & 0xFFFF;
-        Enum {
+        if signed {
+            info |= 1 << 31;
+        }
+        Self {
             name_offset,
             info,
             size: 4,
@@ -437,6 +462,14 @@ impl Enum {
     pub(crate) fn is_signed(&self) -> bool {
         self.info >> 31 == 1
     }
+
+    pub(crate) fn set_signed(&mut self, signed: bool) {
+        if signed {
+            self.info |= 1 << 31;
+        } else {
+            self.info &= !(1 << 31);
+        }
+    }
 }
 
 #[repr(C)]
@@ -445,6 +478,16 @@ pub struct BtfEnum64 {
     pub(crate) name_offset: u32,
     pub(crate) value_low: u32,
     pub(crate) value_high: u32,
+}
+
+impl BtfEnum64 {
+    pub fn new(name_offset: u32, value: u64) -> Self {
+        Self {
+            name_offset,
+            value_low: value as u32,
+            value_high: (value >> 32) as u32,
+        }
+    }
 }
 
 #[repr(C)]
@@ -458,16 +501,34 @@ pub struct Enum64 {
 
 impl Enum64 {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        for v in &self.variants {
-            buf.extend(bytes_of::<u32>(&v.name_offset));
-            buf.extend(bytes_of::<u32>(&v.value_high));
-            buf.extend(bytes_of::<u32>(&v.value_low));
-        }
-        buf
+        let Self {
+            name_offset,
+            info,
+            size,
+            variants,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+        ]
+        .into_iter()
+        .chain(variants.iter().flat_map(
+            |BtfEnum64 {
+                 name_offset,
+                 value_low,
+                 value_high,
+             }| {
+                [
+                    bytes_of::<u32>(name_offset),
+                    bytes_of::<u32>(value_low),
+                    bytes_of::<u32>(value_high),
+                ]
+            },
+        ))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -480,6 +541,26 @@ impl Enum64 {
 
     pub(crate) fn is_signed(&self) -> bool {
         self.info >> 31 == 1
+    }
+
+    pub fn new(name_offset: u32, signed: bool, variants: Vec<BtfEnum64>) -> Self {
+        let mut info = (BtfKind::Enum64 as u32) << 24;
+        if signed {
+            info |= 1 << 31
+        };
+        info |= (variants.len() as u32) & 0xFFFF;
+        Enum64 {
+            name_offset,
+            info,
+            // According to the documentation:
+            //
+            // https://www.kernel.org/doc/html/next/bpf/btf.html
+            //
+            // The size may be 1/2/4/8. Since BtfEnum64::new() takes a u64, we
+            // can assume that the size is 8.
+            size: 8,
+            variants,
+        }
     }
 }
 
@@ -502,16 +583,34 @@ pub struct Struct {
 
 impl Struct {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        for v in &self.members {
-            buf.extend(bytes_of::<u32>(&v.name_offset));
-            buf.extend(bytes_of::<u32>(&v.btf_type));
-            buf.extend(bytes_of::<u32>(&v.offset));
-        }
-        buf
+        let Self {
+            name_offset,
+            info,
+            size,
+            members,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+        ]
+        .into_iter()
+        .chain(members.iter().flat_map(
+            |BtfMember {
+                 name_offset,
+                 btf_type,
+                 offset,
+             }| {
+                [
+                    bytes_of::<u32>(name_offset),
+                    bytes_of::<u32>(btf_type),
+                    bytes_of::<u32>(offset),
+                ]
+            },
+        ))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -525,7 +624,7 @@ impl Struct {
     pub(crate) fn new(name_offset: u32, members: Vec<BtfMember>, size: u32) -> Self {
         let mut info = (BtfKind::Struct as u32) << 24;
         info |= (members.len() as u32) & 0xFFFF;
-        Struct {
+        Self {
             name_offset,
             info,
             size,
@@ -562,17 +661,45 @@ pub struct Union {
 }
 
 impl Union {
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        for v in &self.members {
-            buf.extend(bytes_of::<u32>(&v.name_offset));
-            buf.extend(bytes_of::<u32>(&v.btf_type));
-            buf.extend(bytes_of::<u32>(&v.offset));
+    pub(crate) fn new(name_offset: u32, size: u32, members: Vec<BtfMember>) -> Self {
+        let info = (BtfKind::Union as u32) << 24;
+        Self {
+            name_offset,
+            info,
+            size,
+            members,
         }
-        buf
+    }
+
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let Self {
+            name_offset,
+            info,
+            size,
+            members,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+        ]
+        .into_iter()
+        .chain(members.iter().flat_map(
+            |BtfMember {
+                 name_offset,
+                 btf_type,
+                 offset,
+             }| {
+                [
+                    bytes_of::<u32>(name_offset),
+                    bytes_of::<u32>(btf_type),
+                    bytes_of::<u32>(offset),
+                ]
+            },
+        ))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -609,6 +736,7 @@ pub(crate) struct BtfArray {
     pub(crate) index_type: u32,
     pub(crate) len: u32,
 }
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Array {
@@ -620,12 +748,19 @@ pub struct Array {
 
 impl Array {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self._unused));
-        buf.extend(bytes_of::<BtfArray>(&self.array));
-        buf
+        let Self {
+            name_offset,
+            info,
+            _unused,
+            array,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(_unused),
+            bytes_of::<BtfArray>(array),
+        ]
+        .concat()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -639,7 +774,7 @@ impl Array {
     #[cfg(test)]
     pub(crate) fn new(name_offset: u32, element_type: u32, index_type: u32, len: u32) -> Self {
         let info = (BtfKind::Array as u32) << 24;
-        Array {
+        Self {
             name_offset,
             info,
             _unused: 0,
@@ -670,15 +805,27 @@ pub struct FuncProto {
 
 impl FuncProto {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.return_type));
-        for p in &self.params {
-            buf.extend(bytes_of::<u32>(&p.name_offset));
-            buf.extend(bytes_of::<u32>(&p.btf_type));
-        }
-        buf
+        let Self {
+            name_offset,
+            info,
+            return_type,
+            params,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(return_type),
+        ]
+        .into_iter()
+        .chain(params.iter().flat_map(
+            |BtfParam {
+                 name_offset,
+                 btf_type,
+             }| { [bytes_of::<u32>(name_offset), bytes_of::<u32>(btf_type)] },
+        ))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -692,7 +839,7 @@ impl FuncProto {
     pub fn new(params: Vec<BtfParam>, return_type: u32) -> Self {
         let mut info = (BtfKind::FuncProto as u32) << 24;
         info |= (params.len() as u32) & 0xFFFF;
-        FuncProto {
+        Self {
             name_offset: 0,
             info,
             return_type,
@@ -732,12 +879,19 @@ pub struct Var {
 
 impl Var {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.btf_type));
-        buf.extend(bytes_of::<VarLinkage>(&self.linkage));
-        buf
+        let Self {
+            name_offset,
+            info,
+            btf_type,
+            linkage,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(btf_type),
+            bytes_of::<VarLinkage>(linkage),
+        ]
+        .concat()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -750,7 +904,7 @@ impl Var {
 
     pub fn new(name_offset: u32, btf_type: u32, linkage: VarLinkage) -> Self {
         let info = (BtfKind::Var as u32) << 24;
-        Var {
+        Self {
             name_offset,
             info,
             btf_type,
@@ -778,16 +932,34 @@ pub struct DataSec {
 
 impl DataSec {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.size));
-        for e in &self.entries {
-            buf.extend(bytes_of::<u32>(&e.btf_type));
-            buf.extend(bytes_of::<u32>(&e.offset));
-            buf.extend(bytes_of::<u32>(&e.size));
-        }
-        buf
+        let Self {
+            name_offset,
+            info,
+            size,
+            entries,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(size),
+        ]
+        .into_iter()
+        .chain(entries.iter().flat_map(
+            |DataSecEntry {
+                 btf_type,
+                 offset,
+                 size,
+             }| {
+                [
+                    bytes_of::<u32>(btf_type),
+                    bytes_of::<u32>(offset),
+                    bytes_of::<u32>(size),
+                ]
+            },
+        ))
+        .flatten()
+        .copied()
+        .collect()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -801,7 +973,7 @@ impl DataSec {
     pub fn new(name_offset: u32, entries: Vec<DataSecEntry>, size: u32) -> Self {
         let mut info = (BtfKind::DataSec as u32) << 24;
         info |= (entries.len() as u32) & 0xFFFF;
-        DataSec {
+        Self {
             name_offset,
             info,
             size,
@@ -821,12 +993,19 @@ pub struct DeclTag {
 
 impl DeclTag {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = vec![];
-        buf.extend(bytes_of::<u32>(&self.name_offset));
-        buf.extend(bytes_of::<u32>(&self.info));
-        buf.extend(bytes_of::<u32>(&self.btf_type));
-        buf.extend(bytes_of::<i32>(&self.component_index));
-        buf
+        let Self {
+            name_offset,
+            info,
+            btf_type,
+            component_index,
+        } = self;
+        [
+            bytes_of::<u32>(name_offset),
+            bytes_of::<u32>(info),
+            bytes_of::<u32>(btf_type),
+            bytes_of::<i32>(component_index),
+        ]
+        .concat()
     }
 
     pub(crate) fn kind(&self) -> BtfKind {
@@ -839,7 +1018,7 @@ impl DeclTag {
 
     pub fn new(name_offset: u32, btf_type: u32, component_index: i32) -> Self {
         let info = (BtfKind::DeclTag as u32) << 24;
-        DeclTag {
+        Self {
             name_offset,
             info,
             btf_type,
@@ -1331,7 +1510,7 @@ pub(crate) fn types_are_compatible(
                     continue;
                 }
             }
-            _ => panic!("this shouldn't be reached"),
+            local_ty => panic!("unexpected type {:?}", local_ty),
         }
     }
 
@@ -1382,7 +1561,7 @@ pub(crate) fn fields_are_compatible(
                     continue;
                 }
             }
-            _ => panic!("this shouldn't be reached"),
+            local_ty => panic!("unexpected type {:?}", local_ty),
         }
     }
 
@@ -1395,6 +1574,8 @@ fn bytes_of<T>(val: &T) -> &[u8] {
 }
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+
     use super::*;
 
     #[test]
@@ -1404,18 +1585,17 @@ mod tests {
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x40, 0x00,
             0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Int(new)) => {
-                assert_eq!(new.name_offset, 1);
-                assert_eq!(new.size, 8);
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Int(new @ Int {
+            name_offset,
+            info: _,
+            size,
+            data: _,
+        }) => {
+                assert_eq!(name_offset, 1);
+                assert_eq!(size, 8);
                 assert_eq!(new.bits(), 64);
-                let data2 = new.to_bytes();
-                assert_eq!(data, data2);
-            }
-            Ok(t) => panic!("expected int type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
+                assert_eq!(new.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1454,14 +1634,9 @@ mod tests {
         let data: &[u8] = &[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x06, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Ptr(_)) => {}
-            Ok(t) => panic!("expected ptr type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Ptr(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1471,14 +1646,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
             0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Array(_)) => {}
-            Ok(t) => panic!("expected array type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Array(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1488,14 +1658,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x04, 0x00, 0x00, 0x00, 0x47, 0x02,
             0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Struct(_)) => {}
-            Ok(t) => panic!("expected struct type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Struct(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1505,14 +1670,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x05, 0x04, 0x00, 0x00, 0x00, 0x0d, 0x04,
             0x00, 0x00, 0x68, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Union(_)) => {}
-            Ok(t) => panic!("expected union type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Union(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1522,14 +1682,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0xc9, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xcf, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Enum(_)) => {}
-            Ok(t) => panic!("expected enum type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Enum(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1538,14 +1693,9 @@ mod tests {
         let data: &[u8] = &[
             0x0b, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Fwd(_)) => {}
-            Ok(t) => panic!("expected fwd type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Fwd(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1554,14 +1704,9 @@ mod tests {
         let data: &[u8] = &[
             0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x0b, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Typedef(_)) => {}
-            Ok(t) => panic!("expected typedef type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Typedef(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1570,14 +1715,9 @@ mod tests {
         let data: &[u8] = &[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x24, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Volatile(_)) => {}
-            Ok(t) => panic!("expected volatile type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Volatile(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1586,14 +1726,9 @@ mod tests {
         let data: &[u8] = &[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x01, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Const(_)) => {}
-            Ok(t) => panic!("expected const type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Const(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1602,14 +1737,9 @@ mod tests {
         let data: &[u8] = &[
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x04, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Restrict(_)) => {}
-            Ok(t) => panic!("expected restrict type gpt {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Restrict(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1618,14 +1748,9 @@ mod tests {
         let data: &[u8] = &[
             0x17, 0x8b, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x0c, 0xf0, 0xe4, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Func(_)) => {}
-            Ok(t) => panic!("expected func type gpt {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Func(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1635,14 +1760,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x12, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::FuncProto(_)) => {}
-            Ok(t) => panic!("expected func_proto type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::FuncProto(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1653,14 +1773,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0e, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Var(_)) => {}
-            Ok(t) => panic!("expected var type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        };
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Var(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1670,19 +1785,22 @@ mod tests {
             0xd9, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match &got {
-            Ok(BtfType::DataSec(ty)) => {
-                assert_eq!(0, ty.size);
-                assert_eq!(11, ty.entries[0].btf_type);
-                assert_eq!(0, ty.entries[0].offset);
-                assert_eq!(4, ty.entries[0].size);
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::DataSec(DataSec {
+            name_offset: _,
+            info: _,
+            size,
+            entries,
+         }) => {
+                assert_eq!(size, 0);
+                assert_matches!(*entries, [
+                    DataSecEntry {
+                        btf_type: 11,
+                        offset: 0,
+                        size: 4,
+                    }
+                ]);
             }
-            Ok(t) => panic!("expected datasec type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        );
     }
 
     #[test]
@@ -1691,14 +1809,9 @@ mod tests {
         let data: &[u8] = &[
             0x78, 0xfd, 0x02, 0x00, 0x00, 0x00, 0x00, 0x10, 0x08, 0x00, 0x00, 0x00,
         ];
-        let got = unsafe { BtfType::read(data, endianness) };
-        match got {
-            Ok(BtfType::Float(_)) => {}
-            Ok(t) => panic!("expected float type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
-        let data2 = got.unwrap().to_bytes();
-        assert_eq!(data, data2)
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Float(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 
     #[test]
@@ -1715,14 +1828,17 @@ mod tests {
         ];
         let func_proto = FuncProto::new(params, 2);
         let data = func_proto.to_bytes();
-        let got = unsafe { BtfType::read(&data, Endianness::default()) };
-        match got {
-            Ok(BtfType::FuncProto(fp)) => {
-                assert_eq!(fp.params.len(), 2);
-            }
-            Ok(t) => panic!("expected func proto type, got {t:#?}"),
-            Err(_) => panic!("unexpected error"),
-        }
+        assert_matches!(unsafe { BtfType::read(&data, Endianness::default()) }.unwrap(), BtfType::FuncProto(FuncProto {
+            name_offset: _,
+            info: _,
+            return_type: _,
+            params,
+        }) => {
+            assert_matches!(*params, [
+                _,
+                _,
+            ])
+        });
     }
 
     #[test]
@@ -1739,5 +1855,22 @@ mod tests {
         // int types are compatible if offsets match. size and encoding aren't compared
         assert!(types_are_compatible(&btf, u32t, &btf, u64t).unwrap());
         assert!(types_are_compatible(&btf, array_type, &btf, array_type).unwrap());
+    }
+
+    #[test]
+    pub fn test_read_btf_type_enum64() {
+        let endianness = Endianness::default();
+        let data: &[u8] = &[
+            0x00, 0x00, 0x00, 0x00, // name offset
+            0x01, 0x00, 0x00, 0x13, // info: vlen, type_kind
+            0x08, 0x00, 0x00, 0x00, // size
+            0xd7, 0x06, 0x00, 0x00, // enum variant name offset
+            0xbb, 0xbb, 0xbb, 0xbb, // enum variant low
+            0xaa, 0xaa, 0xaa, 0xaa, // enum variant high
+        ];
+
+        assert_matches!(unsafe { BtfType::read(data, endianness) }.unwrap(), BtfType::Enum64(got) => {
+            assert_eq!(got.to_bytes(), data);
+        });
     }
 }

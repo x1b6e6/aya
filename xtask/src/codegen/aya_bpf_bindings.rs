@@ -1,9 +1,9 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::anyhow;
+use aya_tool::{bindgen, write_to_file_fmt};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
-use std::path::PathBuf;
-
-use aya_tool::{bindgen, write_to_file_fmt};
 use syn::{parse_str, Item};
 
 use crate::codegen::{
@@ -11,7 +11,7 @@ use crate::codegen::{
     Architecture, SysrootOptions,
 };
 
-pub fn codegen(opts: &SysrootOptions) -> Result<(), anyhow::Error> {
+pub fn codegen(opts: &SysrootOptions, libbpf_dir: &Path) -> Result<(), anyhow::Error> {
     let SysrootOptions {
         x86_64_sysroot,
         aarch64_sysroot,
@@ -20,7 +20,6 @@ pub fn codegen(opts: &SysrootOptions) -> Result<(), anyhow::Error> {
     } = opts;
 
     let dir = PathBuf::from("bpf/aya-bpf-bindings");
-    let libbpf_dir = PathBuf::from("libbpf");
 
     let builder = || {
         let mut bindgen = bindgen::bpf_builder()

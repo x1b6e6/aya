@@ -37,7 +37,10 @@
 //! let bytes = std::fs::read("program.o").unwrap();
 //! let mut object = Object::parse(&bytes).unwrap();
 //! // Relocate the programs
+//! #[cfg(feature = "std")]
 //! let text_sections = std::collections::HashSet::new();
+//! #[cfg(not(feature = "std"))]
+//! let text_sections = hashbrown::HashSet::new();
 //! object.relocate_calls(&text_sections).unwrap();
 //! object.relocate_maps(std::iter::empty(), &text_sections).unwrap();
 //!
@@ -74,6 +77,12 @@ mod std {
         pub use core_error::Error;
     }
     pub use core::*;
+
+    pub mod os {
+        pub mod fd {
+            pub type RawFd = core::ffi::c_int;
+        }
+    }
 }
 
 pub mod btf;
@@ -86,3 +95,28 @@ mod util;
 
 pub use maps::Map;
 pub use obj::*;
+
+/// An error returned from the verifier.
+///
+/// Provides a [`Debug`] implementation that doesn't escape newlines.
+pub struct VerifierLog(alloc::string::String);
+
+impl VerifierLog {
+    /// Create a new verifier log.
+    pub fn new(log: alloc::string::String) -> Self {
+        Self(log)
+    }
+}
+
+impl std::fmt::Debug for VerifierLog {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Self(log) = self;
+        f.write_str(log)
+    }
+}
+
+impl std::fmt::Display for VerifierLog {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        <Self as std::fmt::Debug>::fmt(self, f)
+    }
+}

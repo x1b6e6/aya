@@ -4,7 +4,8 @@
 use std::{
     borrow::{Borrow, BorrowMut},
     ops::Deref,
-    os::unix::io::{AsRawFd, RawFd},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
+    path::Path,
     sync::Arc,
 };
 
@@ -13,7 +14,7 @@ use bytes::BytesMut;
 use crate::{
     maps::{
         perf::{Events, PerfBuffer, PerfBufferError},
-        MapData, MapError,
+        MapData, MapError, PinError,
     },
     sys::bpf_map_update_elem,
     util::page_size,
@@ -31,7 +32,7 @@ pub struct PerfEventArrayBuffer<T> {
     buf: PerfBuffer,
 }
 
-impl<T: BorrowMut<MapData> + Borrow<MapData>> PerfEventArrayBuffer<T> {
+impl<T: BorrowMut<MapData>> PerfEventArrayBuffer<T> {
     /// Returns true if the buffer contains events that haven't been read.
     pub fn readable(&self) -> bool {
         self.buf.readable()
@@ -55,7 +56,13 @@ impl<T: BorrowMut<MapData> + Borrow<MapData>> PerfEventArrayBuffer<T> {
     }
 }
 
-impl<T: BorrowMut<MapData> + Borrow<MapData>> AsRawFd for PerfEventArrayBuffer<T> {
+impl<T: BorrowMut<MapData>> AsFd for PerfEventArrayBuffer<T> {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.buf.as_fd()
+    }
+}
+
+impl<T: BorrowMut<MapData>> AsRawFd for PerfEventArrayBuffer<T> {
     fn as_raw_fd(&self) -> RawFd {
         self.buf.as_raw_fd()
     }
@@ -64,7 +71,7 @@ impl<T: BorrowMut<MapData> + Borrow<MapData>> AsRawFd for PerfEventArrayBuffer<T
 /// A map that can be used to receive events from eBPF programs using the linux [`perf`] API.
 ///
 /// Each element of a [`PerfEventArray`] is a separate [`PerfEventArrayBuffer`] which can be used
-/// to receive events sent by eBPF programs that use `bpf_perf_event_output()`.    
+/// to receive events sent by eBPF programs that use `bpf_perf_event_output()`.
 ///
 /// To receive events you need to:
 /// * call [`PerfEventArray::open`]
@@ -138,7 +145,7 @@ impl<T: BorrowMut<MapData> + Borrow<MapData>> AsRawFd for PerfEventArrayBuffer<T
 ///
 /// In the example above the implementation of `poll_buffers()` and `poll.poll_readable()` is not
 /// given. [`PerfEventArrayBuffer`] implements the [`AsRawFd`] trait, so you can implement polling
-/// using any crate that can poll file descriptors, like [epoll], [mio] etc.  
+/// using any crate that can poll file descriptors, like [epoll], [mio] etc.
 ///
 /// Perf buffers are internally implemented as ring buffers. If your eBPF programs produce large
 /// amounts of data, in order not to lose events you might want to process each
@@ -161,17 +168,24 @@ pub struct PerfEventArray<T> {
 }
 
 impl<T: Borrow<MapData>> PerfEventArray<T> {
-    pub(crate) fn new(map: T) -> Result<PerfEventArray<T>, MapError> {
-        let _fd = map.borrow().fd_or_err()?;
-
-        Ok(PerfEventArray {
+    pub(crate) fn new(map: T) -> Result<Self, MapError> {
+        Ok(Self {
             map: Arc::new(map),
             page_size: page_size(),
         })
     }
+
+    /// Pins the map to a BPF filesystem.
+    ///
+    /// When a map is pinned it will remain loaded until the corresponding file
+    /// is deleted. All parent directories in the given `path` must already exist.
+    pub fn pin<P: AsRef<Path>>(&self, path: P) -> Result<(), PinError> {
+        let data: &MapData = self.map.deref().borrow();
+        data.pin(path)
+    }
 }
 
-impl<T: BorrowMut<MapData> + Borrow<MapData>> PerfEventArray<T> {
+impl<T: BorrowMut<MapData>> PerfEventArray<T> {
     /// Opens the perf buffer at the given index.
     ///
     /// The returned buffer will receive all the events eBPF programs send at the given index.
@@ -182,9 +196,8 @@ impl<T: BorrowMut<MapData> + Borrow<MapData>> PerfEventArray<T> {
     ) -> Result<PerfEventArrayBuffer<T>, PerfBufferError> {
         // FIXME: keep track of open buffers
 
-        // this cannot fail as new() checks that the fd is open
         let map_data: &MapData = self.map.deref().borrow();
-        let map_fd = map_data.fd_or_err().unwrap();
+        let map_fd = map_data.fd().as_fd();
         let buf = PerfBuffer::open(index, self.page_size, page_count.unwrap_or(2))?;
         bpf_map_update_elem(map_fd, Some(&index), &buf.as_raw_fd(), 0)
             .map_err(|(_, io_error)| io_error)?;

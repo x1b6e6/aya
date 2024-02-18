@@ -1,10 +1,10 @@
-#include <linux/bpf.h>
+#include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
 extern unsigned int CONFIG_BPF __kconfig;
 
-SEC("xdp/pass")
-int xdp_pass(struct xdp_md *ctx)
+SEC("xdp")
+int pass(struct xdp_md *ctx)
 {
     if (!CONFIG_BPF) {
         return XDP_DROP;

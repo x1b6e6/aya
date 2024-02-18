@@ -8,6 +8,10 @@ publish = false
 aya-bpf = { path = "../../bpf/aya-bpf" }
 aya-log-ebpf = { path = "../../bpf/aya-log-ebpf" }
 
+[build-dependencies]
+which = { workspace = true }
+xtask = { path = "../../xtask" }
+
 [[bin]]
 name = "log"
 path = "src/log.rs"
@@ -35,3 +39,19 @@ path = "src/relocations.rs"
 [[bin]]
 name = "bpf_probe_read"
 path = "src/bpf_probe_read.rs"
+
+[[bin]]
+name = "two_progs"
+path = "src/two_progs.rs"
+
+[[bin]]
+name = "redirect"
+path = "src/redirect.rs"
+
+[[bin]]
+name = "xdp_sec"
+path = "src/xdp_sec.rs"
+
+[[bin]]
+name = "ring_buf"
+path = "src/ring_buf.rs"

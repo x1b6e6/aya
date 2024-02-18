@@ -1,10 +1,9 @@
-#include <linux/bpf.h>
+// clang-format off
+#include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
+// clang-format on
 
-SEC("xdp/pass")
-int xdp_pass(struct xdp_md *ctx)
-{
-    return XDP_PASS;
-}
+SEC("xdp")
+int xdp_pass(struct xdp_md *ctx) { return XDP_PASS; }
 
 char _license[] SEC("license") = "GPL";

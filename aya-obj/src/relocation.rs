@@ -1,11 +1,13 @@
 //! Program relocation handling.
 
+use alloc::{borrow::ToOwned, collections::BTreeMap, string::String};
 use core::mem;
 
-use alloc::{borrow::ToOwned, collections::BTreeMap, string::String};
 use log::debug;
 use object::{SectionIndex, SymbolKind};
 
+#[cfg(not(feature = "std"))]
+use crate::std;
 use crate::{
     generated::{
         bpf_insn, BPF_CALL, BPF_JMP, BPF_K, BPF_PSEUDO_CALL, BPF_PSEUDO_FUNC, BPF_PSEUDO_MAP_FD,
@@ -16,9 +18,6 @@ use crate::{
     util::{HashMap, HashSet},
     BpfSectionKind,
 };
-
-#[cfg(not(feature = "std"))]
-use crate::std;
 
 pub(crate) const INS_SIZE: usize = mem::size_of::<bpf_insn>();
 
@@ -73,15 +72,6 @@ pub enum RelocationError {
         address: u64,
     },
 
-    /// Referenced map not created yet
-    #[error("the map `{name}` at section `{section_index}` has not been created")]
-    MapNotCreated {
-        /// The section index
-        section_index: usize,
-        /// The map name
-        name: String,
-    },
-
     /// Invalid relocation offset
     #[error("invalid offset `{offset}` applying relocation #{relocation_number}")]
     InvalidRelocationOffset {
@@ -116,7 +106,7 @@ pub(crate) struct Symbol {
 
 impl Object {
     /// Relocates the map references
-    pub fn relocate_maps<'a, I: Iterator<Item = (&'a str, Option<i32>, &'a Map)>>(
+    pub fn relocate_maps<'a, I: Iterator<Item = (&'a str, std::os::fd::RawFd, &'a Map)>>(
         &mut self,
         maps: I,
         text_sections: &HashSet<usize>,
@@ -189,8 +179,8 @@ impl Object {
 fn relocate_maps<'a, I: Iterator<Item = &'a Relocation>>(
     fun: &mut Function,
     relocations: I,
-    maps_by_section: &HashMap<usize, (&str, Option<i32>, &Map)>,
-    maps_by_symbol: &HashMap<usize, (&str, Option<i32>, &Map)>,
+    maps_by_section: &HashMap<usize, (&str, std::os::fd::RawFd, &Map)>,
+    maps_by_symbol: &HashMap<usize, (&str, std::os::fd::RawFd, &Map)>,
     symbol_table: &HashMap<usize, Symbol>,
     text_sections: &HashSet<usize>,
 ) -> Result<(), RelocationError> {
@@ -234,7 +224,7 @@ fn relocate_maps<'a, I: Iterator<Item = &'a Relocation>>(
             continue;
         }
 
-        let (name, fd, map) = if let Some(m) = maps_by_symbol.get(&rel.symbol_index) {
+        let (_name, fd, map) = if let Some(m) = maps_by_symbol.get(&rel.symbol_index) {
             let map = &m.2;
             debug!(
                 "relocating map by symbol index {:?}, kind {:?} at insn {ins_index} in section {}",
@@ -270,18 +260,13 @@ fn relocate_maps<'a, I: Iterator<Item = &'a Relocation>>(
         };
         debug_assert_eq!(map.section_index(), section_index);
 
-        let map_fd = fd.ok_or_else(|| RelocationError::MapNotCreated {
-            name: (*name).into(),
-            section_index,
-        })?;
-
         if !map.data().is_empty() {
             instructions[ins_index].set_src_reg(BPF_PSEUDO_MAP_VALUE as u8);
             instructions[ins_index + 1].imm = instructions[ins_index].imm + sym.address as i32;
         } else {
             instructions[ins_index].set_src_reg(BPF_PSEUDO_MAP_FD as u8);
         }
-        instructions[ins_index].imm = map_fd;
+        instructions[ins_index].imm = *fd;
     }
 
     Ok(())
@@ -517,12 +502,11 @@ fn insn_is_call(ins: &bpf_insn) -> bool {
 mod test {
     use alloc::{string::ToString, vec, vec::Vec};
 
+    use super::*;
     use crate::{
         maps::{BtfMap, LegacyMap, Map},
         BpfSectionKind,
     };
-
-    use super::*;
 
     fn fake_sym(index: usize, section_index: usize, address: u64, name: &str, size: u64) -> Symbol {
         Symbol {
@@ -595,7 +579,7 @@ mod test {
         let maps_by_section = HashMap::new();
 
         let map = fake_legacy_map(1);
-        let maps_by_symbol = HashMap::from([(1, ("test_map", Some(1), &map))]);
+        let maps_by_symbol = HashMap::from([(1, ("test_map", 1, &map))]);
 
         relocate_maps(
             &mut fun,
@@ -649,8 +633,8 @@ mod test {
         let map_1 = fake_legacy_map(1);
         let map_2 = fake_legacy_map(2);
         let maps_by_symbol = HashMap::from([
-            (1, ("test_map_1", Some(1), &map_1)),
-            (2, ("test_map_2", Some(2), &map_2)),
+            (1, ("test_map_1", 1, &map_1)),
+            (2, ("test_map_2", 2, &map_2)),
         ]);
 
         relocate_maps(
@@ -690,7 +674,7 @@ mod test {
         let maps_by_section = HashMap::new();
 
         let map = fake_btf_map(1);
-        let maps_by_symbol = HashMap::from([(1, ("test_map", Some(1), &map))]);
+        let maps_by_symbol = HashMap::from([(1, ("test_map", 1, &map))]);
 
         relocate_maps(
             &mut fun,
@@ -744,8 +728,8 @@ mod test {
         let map_1 = fake_btf_map(1);
         let map_2 = fake_btf_map(2);
         let maps_by_symbol = HashMap::from([
-            (1, ("test_map_1", Some(1), &map_1)),
-            (2, ("test_map_2", Some(2), &map_2)),
+            (1, ("test_map_1", 1, &map_1)),
+            (2, ("test_map_2", 2, &map_2)),
         ]);
 
         relocate_maps(

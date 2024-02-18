@@ -7,7 +7,14 @@ use aya_log_ebpf::{debug, error, info, trace, warn};
 #[uprobe]
 pub fn test_log(ctx: ProbeContext) {
     debug!(&ctx, "Hello from eBPF!");
-    error!(&ctx, "{}, {}, {}", 69, 420i32, "wao");
+    error!(
+        &ctx,
+        "{}, {}, {}, {:x}",
+        69,
+        420i32,
+        "wao",
+        "wao".as_bytes()
+    );
     let ipv4 = 167772161u32; // 10.0.0.1
     let ipv6 = [
         32u8, 1u8, 13u8, 184u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
@@ -19,6 +26,11 @@ pub fn test_log(ctx: ProbeContext) {
     warn!(&ctx, "hex lc: {:x}, hex uc: {:X}", hex, hex);
     let hex = [0xde, 0xad, 0xbe, 0xef].as_slice();
     debug!(&ctx, "hex lc: {:x}, hex uc: {:X}", hex, hex);
+    let len = 42;
+    let size = 43;
+    let slice = 44;
+    let record = 45;
+    debug!(&ctx, "{} {} {} {}", len, size, slice, record);
 
     // Testing compilation only.
     if false {

@@ -1,5 +1,3 @@
-use core::{mem, ops::Bound::Included, ptr};
-
 use alloc::{
     borrow::{Cow, ToOwned as _},
     collections::BTreeMap,
@@ -8,8 +6,12 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use core::{mem, ops::Bound::Included, ptr};
+
 use object::SectionIndex;
 
+#[cfg(not(feature = "std"))]
+use crate::std;
 use crate::{
     btf::{
         fields_are_compatible, types_are_compatible, Array, Btf, BtfError, BtfMember, BtfType,
@@ -22,9 +24,6 @@ use crate::{
     util::HashMap,
     Function, Object,
 };
-
-#[cfg(not(feature = "std"))]
-use crate::std;
 
 /// The error type returned by [`Object::relocate_btf`].
 #[derive(thiserror::Error, Debug)]
@@ -451,9 +450,9 @@ fn match_candidate<'target>(
                 candidate.btf,
                 candidate.type_id,
             )? {
-                return Ok(Some(target_spec));
+                Ok(Some(target_spec))
             } else {
-                return Ok(None);
+                Ok(None)
             }
         }
         RelocationKind::EnumVariantExists | RelocationKind::EnumVariantValue => {
@@ -461,8 +460,15 @@ fn match_candidate<'target>(
             let target_ty = candidate.btf.type_by_id(target_id)?;
             // the first accessor is guaranteed to have a name by construction
             let local_variant_name = local_spec.accessors[0].name.as_ref().unwrap();
-            let match_enum =
-                |name_offset, index, target_spec: &mut AccessSpec| -> Result<_, BtfError> {
+
+            fn match_enum<'a>(
+                iterator: impl Iterator<Item = (usize, u32)>,
+                candidate: &Candidate,
+                local_variant_name: &str,
+                target_id: u32,
+                mut target_spec: AccessSpec<'a>,
+            ) -> Result<Option<AccessSpec<'a>>, RelocationError> {
+                for (index, name_offset) in iterator {
                     let target_variant_name = candidate.btf.string_at(name_offset)?;
                     if flavorless_name(local_variant_name) == flavorless_name(&target_variant_name)
                     {
@@ -472,29 +478,34 @@ fn match_candidate<'target>(
                             type_id: target_id,
                             name: None,
                         });
-                        Ok(Some(()))
-                    } else {
-                        Ok(None)
+                        return Ok(Some(target_spec));
                     }
-                };
+                }
+                Ok(None)
+            }
+
             match target_ty {
-                BtfType::Enum(en) => {
-                    for (index, member) in en.variants.iter().enumerate() {
-                        if let Ok(Some(_)) = match_enum(member.name_offset, index, &mut target_spec)
-                        {
-                            return Ok(Some(target_spec));
-                        }
-                    }
-                }
-                BtfType::Enum64(en) => {
-                    for (index, member) in en.variants.iter().enumerate() {
-                        if let Ok(Some(_)) = match_enum(member.name_offset, index, &mut target_spec)
-                        {
-                            return Ok(Some(target_spec));
-                        }
-                    }
-                }
-                _ => return Ok(None),
+                BtfType::Enum(en) => match_enum(
+                    en.variants
+                        .iter()
+                        .map(|member| member.name_offset)
+                        .enumerate(),
+                    candidate,
+                    local_variant_name,
+                    target_id,
+                    target_spec,
+                ),
+                BtfType::Enum64(en) => match_enum(
+                    en.variants
+                        .iter()
+                        .map(|member| member.name_offset)
+                        .enumerate(),
+                    candidate,
+                    local_variant_name,
+                    target_id,
+                    target_spec,
+                ),
+                _ => Ok(None),
             }
         }
         RelocationKind::FieldByteOffset
@@ -561,10 +572,9 @@ fn match_candidate<'target>(
                         accessor.index * candidate.btf.type_size(target_id)? * 8;
                 }
             }
+            Ok(Some(target_spec))
         }
-    };
-
-    Ok(Some(target_spec))
+    }
 }
 
 fn match_member<'target>(
@@ -580,7 +590,7 @@ fn match_member<'target>(
         // this won't panic, bounds are checked when local_spec is built in AccessSpec::new
         BtfType::Struct(s) => s.members.get(local_accessor.index).unwrap(),
         BtfType::Union(u) => u.members.get(local_accessor.index).unwrap(),
-        _ => panic!("bug! this should only be called for structs and unions"),
+        local_ty => panic!("unexpected type {:?}", local_ty),
     };
 
     let local_name = &*local_btf.string_at(local_member.name_offset)?;
@@ -1210,8 +1220,10 @@ impl ComputedRelocation {
             FieldRShift64 => {
                 value.value = 64 - bit_size as u64;
             }
-            FieldExists // this is handled at the start of the function
-            | _ => panic!("bug! this should not be reached"),
+            kind @ (FieldExists | TypeIdLocal | TypeIdTarget | TypeExists | TypeSize
+            | EnumVariantExists | EnumVariantValue) => {
+                panic!("unexpected relocation kind {:?}", kind)
+            }
         }
 
         Ok(value)

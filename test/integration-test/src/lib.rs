@@ -4,6 +4,9 @@ pub const EXT: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/ext.bpf
 pub const MAIN: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/main.bpf.o"));
 pub const MULTIMAP_BTF: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/multimap-btf.bpf.o"));
+pub const RELOC_BPF: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/reloc.bpf.o"));
+pub const RELOC_BTF: &[u8] =
+    include_bytes_aligned!(concat!(env!("OUT_DIR"), "/reloc.bpf.target.o"));
 pub const TEXT_64_64_RELOC: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/text_64_64_reloc.o"));
 pub const KCONFIG: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/kconfig.bpf.o"));
@@ -14,8 +17,14 @@ pub const NAME_TEST: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/n
 pub const PASS: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/pass"));
 pub const TEST: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/test"));
 pub const RELOCATIONS: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/relocations"));
+pub const TWO_PROGS: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/two_progs"));
 pub const BPF_PROBE_READ: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bpf_probe_read"));
+pub const REDIRECT: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/redirect"));
+pub const XDP_SEC: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/xdp_sec"));
+pub const RING_BUF: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/ring_buf"));
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod utils;

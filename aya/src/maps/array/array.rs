@@ -1,11 +1,12 @@
 use std::{
     borrow::{Borrow, BorrowMut},
     marker::PhantomData,
+    os::fd::AsFd as _,
 };
 
 use crate::{
     maps::{check_bounds, check_kv_size, IterableMap, MapData, MapError},
-    sys::{bpf_map_lookup_elem, bpf_map_update_elem},
+    sys::{bpf_map_lookup_elem, bpf_map_update_elem, SyscallError},
     Pod,
 };
 
@@ -30,18 +31,16 @@ use crate::{
 /// ```
 #[doc(alias = "BPF_MAP_TYPE_ARRAY")]
 pub struct Array<T, V: Pod> {
-    inner: T,
+    pub(crate) inner: T,
     _v: PhantomData<V>,
 }
 
 impl<T: Borrow<MapData>, V: Pod> Array<T, V> {
-    pub(crate) fn new(map: T) -> Result<Array<T, V>, MapError> {
+    pub(crate) fn new(map: T) -> Result<Self, MapError> {
         let data = map.borrow();
         check_kv_size::<u32, V>(data)?;
 
-        let _fd = data.fd_or_err()?;
-
-        Ok(Array {
+        Ok(Self {
             inner: map,
             _v: PhantomData,
         })
@@ -63,14 +62,13 @@ impl<T: Borrow<MapData>, V: Pod> Array<T, V> {
     pub fn get(&self, index: &u32, flags: u64) -> Result<V, MapError> {
         let data = self.inner.borrow();
         check_bounds(data, *index)?;
-        let fd = data.fd_or_err()?;
+        let fd = data.fd().as_fd();
 
-        let value = bpf_map_lookup_elem(fd, index, flags).map_err(|(_, io_error)| {
-            MapError::SyscallError {
+        let value =
+            bpf_map_lookup_elem(fd, index, flags).map_err(|(_, io_error)| SyscallError {
                 call: "bpf_map_lookup_elem",
                 io_error,
-            }
-        })?;
+            })?;
         value.ok_or(MapError::KeyNotFound)
     }
 
@@ -91,9 +89,9 @@ impl<T: BorrowMut<MapData>, V: Pod> Array<T, V> {
     pub fn set(&mut self, index: u32, value: impl Borrow<V>, flags: u64) -> Result<(), MapError> {
         let data = self.inner.borrow_mut();
         check_bounds(data, index)?;
-        let fd = data.fd_or_err()?;
+        let fd = data.fd().as_fd();
         bpf_map_update_elem(fd, Some(&index), value.borrow(), flags).map_err(|(_, io_error)| {
-            MapError::SyscallError {
+            SyscallError {
                 call: "bpf_map_update_elem",
                 io_error,
             }
