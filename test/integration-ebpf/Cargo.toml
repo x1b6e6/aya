@@ -64,3 +64,7 @@ path = "src/ring_buf.rs"
 [[bin]]
 name = "memmove_test"
 path = "src/memmove_test.rs"
+
+[[bin]]
+name = "syscall"
+path = "src/syscall.rs"

@@ -660,6 +660,24 @@ pub(crate) fn bpf_btf_get_fd_by_id(id: u32) -> Result<crate::MockableFd, Syscall
     })
 }
 
+pub(crate) fn bpf_prog_test_run(
+    fd: BorrowedFd<'_>,
+    payload: &mut [u8],
+) -> Result<i64, SyscallError> {
+    let mut attr = unsafe { mem::zeroed::<bpf_attr>() };
+    attr.test.prog_fd = fd.as_raw_fd() as u32;
+    attr.test.ctx_in = payload.as_mut_ptr() as u64;
+    attr.test.ctx_size_in = payload.len() as u32;
+
+    sys_bpf(bpf_cmd::BPF_PROG_TEST_RUN, &mut attr).map_err(|(code, io_error)| {
+        assert_eq!(code, -1);
+        SyscallError {
+            call: "bpf_prog_test_run",
+            io_error,
+        }
+    })
+}
+
 pub(crate) fn is_prog_name_supported() -> bool {
     let mut attr = unsafe { mem::zeroed::<bpf_attr>() };
     let u = unsafe { &mut attr.__bindgen_anon_3 };

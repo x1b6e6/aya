@@ -33,7 +33,7 @@ use crate::{
         BtfTracePoint, CgroupDevice, CgroupSkb, CgroupSkbAttachType, CgroupSock, CgroupSockAddr,
         CgroupSockopt, CgroupSysctl, Extension, FEntry, FExit, KProbe, LircMode2, Lsm, PerfEvent,
         ProbeKind, Program, ProgramData, ProgramError, RawTracePoint, SchedClassifier, SkLookup,
-        SkMsg, SkSkb, SkSkbKind, SockOps, SocketFilter, TracePoint, UProbe, Xdp,
+        SkMsg, SkSkb, SkSkbKind, SockOps, SocketFilter, Syscall, TracePoint, UProbe, Xdp,
     },
     sys::{
         bpf_load_btf, is_bpf_cookie_supported, is_bpf_global_data_supported,
@@ -439,7 +439,8 @@ impl<'a> EbpfLoader<'a> {
                                 | ProgramSection::RawTracePoint
                                 | ProgramSection::SkLookup
                                 | ProgramSection::CgroupSock { attach_type: _ }
-                                | ProgramSection::CgroupDevice => {}
+                                | ProgramSection::CgroupDevice
+                                | ProgramSection::Syscall => {}
                             }
                         }
 
@@ -689,6 +690,13 @@ impl<'a> EbpfLoader<'a> {
                         }
                         ProgramSection::CgroupDevice => Program::CgroupDevice(CgroupDevice {
                             data: ProgramData::new(prog_name, obj, btf_fd, *verifier_log_level),
+                        }),
+                        ProgramSection::Syscall => Program::Syscall({
+                            let mut data =
+                                ProgramData::new(prog_name, obj, btf_fd, *verifier_log_level);
+                            // Syscall programs can only be sleepable
+                            data.flags = BPF_F_SLEEPABLE;
+                            Syscall { data }
                         }),
                     }
                 };

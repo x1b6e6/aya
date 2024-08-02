@@ -62,6 +62,7 @@ pub mod sk_msg;
 pub mod sk_skb;
 pub mod sock_ops;
 pub mod socket_filter;
+pub mod syscall;
 pub mod tc;
 pub mod tp_btf;
 pub mod trace_point;
@@ -104,6 +105,7 @@ pub use crate::programs::{
     sk_skb::{SkSkb, SkSkbKind},
     sock_ops::SockOps,
     socket_filter::{SocketFilter, SocketFilterError},
+    syscall::Syscall,
     tc::{SchedClassifier, TcAttachType, TcError},
     tp_btf::BtfTracePoint,
     trace_point::{TracePoint, TracePointError},
@@ -293,6 +295,8 @@ pub enum Program {
     CgroupSock(CgroupSock),
     /// A [`CgroupDevice`] program
     CgroupDevice(CgroupDevice),
+    /// A [`Syscall`] program
+    Syscall(Syscall),
 }
 
 impl Program {
@@ -324,6 +328,7 @@ impl Program {
             Self::SkLookup(_) => BPF_PROG_TYPE_SK_LOOKUP,
             Self::CgroupSock(_) => BPF_PROG_TYPE_CGROUP_SOCK,
             Self::CgroupDevice(_) => BPF_PROG_TYPE_CGROUP_DEVICE,
+            Self::Syscall(_) => BPF_PROG_TYPE_SYSCALL,
         }
     }
 
@@ -354,6 +359,7 @@ impl Program {
             Self::SkLookup(p) => p.pin(path),
             Self::CgroupSock(p) => p.pin(path),
             Self::CgroupDevice(p) => p.pin(path),
+            Self::Syscall(p) => p.pin(path),
         }
     }
 
@@ -384,6 +390,7 @@ impl Program {
             Self::SkLookup(mut p) => p.unload(),
             Self::CgroupSock(mut p) => p.unload(),
             Self::CgroupDevice(mut p) => p.unload(),
+            Self::Syscall(mut p) => p.unload(),
         }
     }
 
@@ -416,6 +423,7 @@ impl Program {
             Self::SkLookup(p) => p.fd(),
             Self::CgroupSock(p) => p.fd(),
             Self::CgroupDevice(p) => p.fd(),
+            Self::Syscall(p) => p.fd(),
         }
     }
 
@@ -449,6 +457,7 @@ impl Program {
             Self::SkLookup(p) => p.info(),
             Self::CgroupSock(p) => p.info(),
             Self::CgroupDevice(p) => p.info(),
+            Self::Syscall(p) => p.info(),
         }
     }
 }
@@ -763,6 +772,7 @@ impl_program_unload!(
     SockOps,
     CgroupSock,
     CgroupDevice,
+    Syscall,
 );
 
 macro_rules! impl_fd {
@@ -803,6 +813,7 @@ impl_fd!(
     SockOps,
     CgroupSock,
     CgroupDevice,
+    Syscall,
 );
 
 macro_rules! impl_program_pin{
@@ -857,6 +868,7 @@ impl_program_pin!(
     SockOps,
     CgroupSock,
     CgroupDevice,
+    Syscall,
 );
 
 macro_rules! impl_from_pin {
@@ -895,6 +907,7 @@ impl_from_pin!(
     SkLookup,
     SockOps,
     CgroupDevice,
+    Syscall,
 );
 
 macro_rules! impl_try_from_program {
@@ -950,6 +963,7 @@ impl_try_from_program!(
     SkLookup,
     CgroupSock,
     CgroupDevice,
+    Syscall,
 );
 
 /// Returns information about a loaded program with the [`ProgramInfo`] structure.
@@ -997,6 +1011,7 @@ impl_info!(
     SockOps,
     CgroupSock,
     CgroupDevice,
+    Syscall,
 );
 
 /// Provides information about a loaded program, like name, id and statistics

@@ -270,6 +270,7 @@ pub enum ProgramSection {
         attach_type: CgroupSockAttachType,
     },
     CgroupDevice,
+    Syscall,
 }
 
 impl FromStr for ProgramSection {
@@ -421,6 +422,7 @@ impl FromStr for ProgramSection {
             "fexit.s" => FExit { sleepable: true },
             "freplace" => Extension,
             "sk_lookup" => SkLookup,
+            "syscall" => Syscall,
             _ => {
                 return Err(ParseError::InvalidProgramSection {
                     section: section.to_owned(),

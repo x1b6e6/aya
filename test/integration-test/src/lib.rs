@@ -9,6 +9,7 @@ pub const RELOC_BTF: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/reloc.bpf.target.o"));
 pub const TEXT_64_64_RELOC: &[u8] =
     include_bytes_aligned!(concat!(env!("OUT_DIR"), "/text_64_64_reloc.o"));
+pub const SYSCALL_C: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/syscall.bpf.o"));
 
 pub const LOG: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/log"));
 pub const MAP_TEST: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/map_test"));
@@ -23,6 +24,7 @@ pub const REDIRECT: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/re
 pub const XDP_SEC: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/xdp_sec"));
 pub const RING_BUF: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/ring_buf"));
 pub const MEMMOVE_TEST: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/memmove_test"));
+pub const SYSCALL_RS: &[u8] = include_bytes_aligned!(concat!(env!("OUT_DIR"), "/syscall"));
 
 #[cfg(test)]
 mod tests;

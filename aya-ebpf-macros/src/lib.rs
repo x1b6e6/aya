@@ -18,6 +18,7 @@ mod sk_msg;
 mod sk_skb;
 mod sock_ops;
 mod socket_filter;
+mod syscall;
 mod tc;
 mod tracepoint;
 mod uprobe;
@@ -44,6 +45,7 @@ use sk_msg::SkMsg;
 use sk_skb::{SkSkb, SkSkbKind};
 use sock_ops::SockOps;
 use socket_filter::SocketFilter;
+use syscall::Syscall;
 use tc::SchedClassifier;
 use tracepoint::TracePoint;
 use uprobe::{UProbe, UProbeKind};
@@ -660,6 +662,45 @@ pub fn sk_lookup(attrs: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn cgroup_device(attrs: TokenStream, item: TokenStream) -> TokenStream {
     match CgroupDevice::parse(attrs.into(), item.into()) {
+        Ok(prog) => prog
+            .expand()
+            .unwrap_or_else(|err| abort!(err.span(), "{}", err))
+            .into(),
+        Err(err) => abort!(err.span(), "{}", err),
+    }
+}
+
+/// Marks a function as syscall eBPF program that can be invoked from userspace
+///
+/// # Minimum kernel version
+///
+/// The minimum kernel version required to use this feature is 5.14.0
+///
+/// # Examples
+///
+/// ```no_run
+/// use aya_ebpf::macros::syscall;
+/// use aya_ebpf::programs::SyscallContext;
+/// use aya_ebpf::EbpfContext as _;
+///
+/// #[repr(C)]
+/// #[derive(Clone, Copy)]
+/// struct MyData {
+///     value: i32,
+/// }
+///
+/// #[syscall]
+/// fn my_syscall(ctx: SyscallContext) -> i64 {
+///     let data = unsafe{ &mut *(ctx.as_ptr() as *mut MyData) };
+///     data.value = 42;
+///     // return error codes or using them as return value
+///     return 0;
+/// }
+/// ```
+#[proc_macro_error]
+#[proc_macro_attribute]
+pub fn syscall(attrs: TokenStream, item: TokenStream) -> TokenStream {
+    match Syscall::parse(attrs.into(), item.into()) {
         Ok(prog) => prog
             .expand()
             .unwrap_or_else(|err| abort!(err.span(), "{}", err))
